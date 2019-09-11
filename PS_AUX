@@ -1,0 +1,225 @@
+#include <unistd.h> 
+#include <stdlib.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <string.h>
+#include <pwd.h>
+#include <math.h> 
+#include <time.h>
+#include <sys/times.h> 
+
+int main(int argc, char** argv){
+  
+  printf("USER       PID %%CPU %%MEM    VSZ   RSS TTY      STAT START   TIME COMMAND \n");
+  DIR *proc;
+  struct dirent *sd;
+  
+  proc = opendir("/proc");
+  
+  if(proc == NULL){
+    printf("Directory Error \n");
+    exit(1);
+  } 
+
+  int counter = 0;
+ 
+  while( (sd = readdir(proc)) != NULL ){
+    if(counter > 60){
+      
+      // PID and STATUS of process
+      char fileName[50];
+      int pid;  
+      char garbage[75];
+      char state[2];
+      sprintf(fileName, "/proc/%s/stat", sd->d_name);
+      FILE *stats = fopen(fileName, "r");
+      fscanf(stats, " %d %s %s", &pid, &garbage, &state);
+      fclose(stats);
+
+      
+      // VmSize and VmRSS of process
+      char fileName_2[50];
+      sprintf(fileName_2, "/proc/%s/status", sd->d_name);
+      FILE *status = fopen(fileName_2, "r");
+      char size[100];
+      char VmSize[50];
+      char VmRss[50];
+      int foundSize = 0;
+      int foundUid = 0;
+      int foundGid = 0;
+      int foundRss = 0;
+      char comm[300];
+      int count = 0;
+      char uid[50];
+      char gid[50];
+
+      while( (fscanf(status," %s", size)) != EOF){
+	     if(count == 1){
+	     strcpy(comm, size);
+	    }
+	
+      if(foundSize == 1){
+          strcpy(VmSize, size);
+          foundSize++;
+	     }
+	    
+      if(strcmp(size, "VmSize:") == 0){
+	       foundSize++;
+	    }
+
+	   if(foundRss == 1){
+	      strcpy(VmRss, size);
+        foundRss++;
+     }
+	
+     if( strcmp(size, "VmRSS:") == 0){
+	       foundRss++;
+	   }
+	
+	   if(foundUid == 1){
+          strcpy(uid, size);
+          foundUid++;
+     }
+	
+     if( strcmp(size, "Uid:") == 0){
+          foundUid++;
+     }
+
+	   if(foundGid == 1){
+	        strcpy(gid, size);	  
+	        foundGid++;
+	   }
+	
+     if(strcmp(size, "Gid:") == 0){
+	       foundGid++;
+	   }
+
+    count++;
+	  bzero(size, 100);
+  }
+          
+      if(foundSize == 0){
+	      VmSize[0] = '0';
+      }
+ 
+      if(foundRss == 0){
+        VmRss[0] = '0';
+      }
+      fclose(status);
+      
+      // Users
+      char username[50];
+      uid_t uidCode = atoi(uid);      
+      struct passwd *user;
+      user = getpwuid(uidCode);
+      strcpy(username, user->pw_name);      
+     
+
+
+      // Command
+      char cmdloc[60]; 
+      sprintf(cmdloc, "/proc/%s/cmdline", sd->d_name);
+      FILE *cmdline = fopen(cmdloc, "r");
+      char ch;
+      char storage[200];
+      int indx = 0;
+      
+      while(1){
+	ch = fgetc(cmdline);
+	if(ch == '\0' || ch == EOF){
+	  break;
+	}
+	storage[indx] = ch;
+	indx++;
+      }
+      char storage2[200];
+      bzero(storage2, 200);
+      if (!memcmp (storage, storage2, 200)){
+	bzero(storage, 200);
+	strcpy(storage, comm);
+      }
+      
+      fclose(cmdline);
+
+      /*
+      // START
+      double diff_t;
+      time_t currtime;
+      time(&currtime);
+      struct tm *temp = localtime(&currtime);
+      //struct tm *date = gmtime(currtime);
+      //printf( "Year = %d\n", date->tm_year );
+      //printf("%i %i\n", temp->tm_mday, temp->tm_mon+1);
+      time_t cc;
+      cc = strtoul( sd->d_name, NULL, 0 );
+      diff_t = difftime(currtime, cc);
+      printf("Execution time = %f\n", diff_t);
+      struct tm *tm2 = ctime( &diff_t );
+      //printf("%s \n", cc);
+      printf("%i %i\n", tm2->tm_mday, tm2->tm_mon+1);      
+      */  
+            
+      
+
+      // TIME
+      char tloc[100];
+      sprintf(tloc, "/proc/%s/sched", sd->d_name);
+      FILE *tfile = fopen(tloc, "r");
+      int f,t = 0;
+      char timeinfo[100];
+      while(t != 16){
+	    bzero(timeinfo,50);
+        fscanf(tfile, " %s", timeinfo);
+	if(strcmp("se.sum_exec_runtime",timeinfo) == 0){
+	  fscanf(tfile, " %s", timeinfo);
+	  bzero(timeinfo,50);
+	  fscanf(tfile, " %s", timeinfo);
+	  break;
+	}
+	t++;
+      }
+      double time = (atof(timeinfo)/60000);
+      time = (trunc(time*100.0)/100.0);
+      fclose(tfile);
+
+
+      // MEM
+      char mem[100];
+      sprintf(mem, "/proc/meminfo", sd->d_name);
+      FILE *meminfo = fopen(mem, "r");
+      int c = 0;
+      char kb[50];
+      double percentMem;
+      while(c != 2){
+	bzero(kb,50);
+	fscanf(meminfo, " %s", kb);
+	if(c == 2){
+	  break;
+	}
+	c++;
+      }
+      double rss = atof(VmRss);
+      double ram = atof(kb);
+      percentMem = 100*(rss/ram);
+      percentMem = trunc(percentMem*10.0)/10.0;
+      fclose(meminfo);
+      
+      // TTY
+      char tty = '?';
+      double cpu = 0.00;
+
+
+
+      printf("%-8s %5d  %0.1lf  %0.1lf %+6s %+5s %c        %-3s        %6.2lf %-20s\n", username, pid, cpu, percentMem, VmSize, VmRss, tty, state, time, storage);
+      bzero(storage,200);
+      bzero(comm, 300);
+      bzero(VmRss,50);
+      bzero(VmSize,50);
+    }
+    counter++;
+  }
+  
+  closedir(proc);
+  return 0;
+}
